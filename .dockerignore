@@ -1,0 +1,15 @@
+# The build context only needs: Dockerfile, Makefile, src/, scripts/,
+# packages/, repo/pacman.conf, iso-profile/. Everything below would otherwise
+# be COPY'd into the image (lyw-test.img alone is 20G, and the chown -R layer
+# doubles it — that's how the image hit 44GB and filled the disk).
+lyw-test.img
+*.img
+*.iso
+*.fd
+.artools-work
+.pkgcache
+out
+lyw-out
+lyw
+src/*.o
+.git

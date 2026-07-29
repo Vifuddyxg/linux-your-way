@@ -1,0 +1,9 @@
+NAME="Linux Your Way"
+PRETTY_NAME="Linux Your Way (live)"
+ID=lyw
+ID_LIKE=artix
+BUILD_ID=rolling
+ANSI_COLOR="1;33"
+HOME_URL="https://github.com/Vifuddyxg/linux-your-way"
+BUG_REPORT_URL="https://github.com/Vifuddyxg/linux-your-way/issues"
+LOGO=lyw

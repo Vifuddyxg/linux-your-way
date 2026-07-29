@@ -1,0 +1,41 @@
+# Linux Your Way — system configuration
+lyw:
+  version: 2
+  architecture: x86_64
+  firmware: uefi
+  libc: glibc
+  core: gnu
+  shell: bash
+  init: dinit
+  package_manager: pacman
+  kernel: lts
+  kernel_build: precompiled
+  kernel_compiler: gcc
+  kernel_compress: zstd
+  kernel_modules: modules
+  initramfs: separate
+  toolchain: gnu
+  build_profile: compat
+  graphics: none
+  bootloader: grub
+  secure_boot: off
+  filesystem: ext4
+  encryption: none
+  network: dhcpcd
+  login: password
+  privesc: doas
+  security: firewall
+  install_method: hybrid
+  target:
+    mode: ask-at-install
+  system:
+    hostname: "lyw"
+    timezone: "Europe/Bucharest"
+    locale: "en_US.UTF-8"
+    keymap: "us"
+    user: ""
+    boot_timeout: 3
+    root_password: unset
+  compatibility:
+    overall: stable
+    findings: []

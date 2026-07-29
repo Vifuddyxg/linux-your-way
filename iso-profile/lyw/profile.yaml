@@ -1,0 +1,75 @@
+---
+# Linux Your Way — artools buildiso profile (adapted from the Wheatley recipe).
+# The live ISO autologins root on tty1 and launches the `lyw` TUI configurator.
+# The generated lyw-out/build.sh then assembles the chosen system on disk,
+# pulling from the right upstream repos (Arch/Artix/Void/Alpine/Gentoo/...).
+
+live-session:
+  user: lyw
+  password: lyw
+  autologin: true
+  use-xlibre: false
+  services:
+    - NetworkManager
+
+rootfs:
+  packages:
+    # --- LYW custom repo ---
+    - lyw-tui
+    # --- disk + filesystem tools every build.sh path may need ---
+    - gptfdisk
+    - parted
+    - dosfstools
+    - e2fsprogs
+    - btrfs-progs
+    - cryptsetup
+    # ntfsresize, for the dual-boot "shrink Windows partition" path
+    - ntfs-3g
+    # --- bootstrap tools for the target systems ---
+    #     basestrap/artix-chroot (Artix targets):
+    - artools-base
+    #     pacstrap/arch-chroot: arch-install-scripts is NOT in the Artix repos
+    #     (buildiso: "target not found") — Arch/systemd targets bootstrap with
+    #     basestrap against Arch repos instead, or fetch pacstrap in build.sh.
+    #     Void (xbps) and Alpine (apk) targets need no live package: build.sh
+    #     downloads static xbps / apk.static by itself. Gentoo needs curl+tar.
+    # --- networking for the live session (nmtui) ---
+    - networkmanager
+    - wpa_supplicant
+    - openresolv
+    # --- fetching sources/stage3/static tools ---
+    - curl
+    - wget
+    - git
+    - rsync
+    # --- handy CLI ---
+    - htop
+    - vim
+    - fastfetch
+    # common.yaml pulls the virtual `vi`; name a concrete provider so the
+    # non-interactive rootfs install doesn't stop at a provider prompt.
+    - ex-vi-compat
+  packages-init:
+    dinit:
+      - networkmanager-dinit
+    openrc:
+      - networkmanager-openrc
+    runit:
+      - networkmanager-runit
+    s6:
+      - networkmanager-s6
+
+livefs:
+  packages:
+    - squashfs-tools
+    - mkinitcpio-nfs-utils
+    - artix-grub-live
+  packages-init:
+    dinit:
+      - artix-live-dinit
+    openrc:
+      - artix-live-openrc
+    runit:
+      - artix-live-runit
+    s6:
+      - artix-live-s6

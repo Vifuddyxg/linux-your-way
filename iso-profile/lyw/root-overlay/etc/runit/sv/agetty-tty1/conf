@@ -1,0 +1,14 @@
+if [ -x /sbin/agetty -o -x /bin/agetty ]; then
+	# util-linux specific settings
+	if [ "${tty}" = "tty1" ]; then
+		# LYW live: log ROOT in automatically on tty1 (no username/
+		# password prompt). The configurator and every disk/bootstrap
+		# tool need root anyway. The login shell sources
+		# /etc/profile.d/lyw-live.sh, which launches the lyw TUI.
+		# no --noclear: wipe the boot chatter before the TUI starts
+		GETTY_ARGS="--autologin root"
+	fi
+fi
+
+BAUD_RATE=38400
+TERM_NAME=linux

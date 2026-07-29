@@ -1,0 +1,23 @@
+# Maintainer: gentoobdw
+# Built from the local source tree: scripts/make-iso.sh tars Makefile+src/
+# into lyw-src.tar.gz next to this PKGBUILD before calling makepkg.
+pkgname=lyw-tui
+pkgver=0.4.0
+pkgrel=1
+pkgdesc="Linux Your Way — pick every layer of your Linux system (TUI configurator)"
+arch=('x86_64')
+url="https://github.com/gentoobdw/lyw"
+license=('MIT')
+depends=('ncurses' 'libxcrypt')
+makedepends=('gcc' 'make' 'pkgconf')
+source=('lyw-src.tar.gz')
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir"
+    make
+}
+
+package() {
+    install -Dm755 "$srcdir/lyw" "$pkgdir/usr/bin/lyw"
+}

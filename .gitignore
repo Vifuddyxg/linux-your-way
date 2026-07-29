@@ -1,0 +1,23 @@
+# build artifacts
+/lyw
+src/*.o
+/out/
+/lyw-out/
+
+# ISO build workdirs (huge)
+/.artools-work/
+/.pkgcache/
+*.img
+*.iso
+*.fd
+
+# generated during the container build
+/packages/lyw-tui/lyw-src.tar.gz
+/packages/lyw-tui/*.pkg.tar.*
+/packages/lyw-tui/pkg/
+/packages/lyw-tui/src/
+/repo/x86_64/
+
+# local tool state / scratch
+/.claude-flow/
+/e.txt

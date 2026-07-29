@@ -1,0 +1,45 @@
+# Linux Your Way — system configuration
+lyw:
+  version: 2
+  architecture: x86_64
+  firmware: uefi
+  libc: musl
+  core: gnu
+  shell: bash
+  init: dinit
+  package_manager: apk
+  kernel: lts
+  kernel_build: precompiled
+  kernel_compiler: gcc
+  kernel_compress: zstd
+  kernel_modules: modules
+  initramfs: separate
+  toolchain: gnu
+  build_profile: compat
+  graphics: none
+  bootloader: grub
+  secure_boot: off
+  filesystem: ext4
+  encryption: none
+  network: dhcpcd
+  login: password
+  privesc: none
+  security: selinux
+  install_method: hybrid
+  target:
+    mode: ask-at-install
+  system:
+    hostname: "lyw"
+    timezone: "Europe/Bucharest"
+    locale: "en_US.UTF-8"
+    keymap: "us"
+    user: ""
+    boot_timeout: 3
+    root_password: unset
+  compatibility:
+    overall: incompatible
+    findings:
+      - status: incompatible
+        note: "SELinux needs rebuilt/labeled packages; only Gentoo has real support"
+      - status: manual-config-needed
+        note: "Alpine services are OpenRC scripts; dinit needs hand-written services"
