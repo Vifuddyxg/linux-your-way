@@ -7,26 +7,34 @@
  *   DISK        the target disk
  *   WIPE        1 = wipe + auto-partition the whole disk, 0 = surgical
  *   FORMAT_ESP  1 = mkfs.fat the ESP, 0 = reuse it untouched (dual-boot)
- *   ESP ROOTP   partitions to use ("" ESP on BIOS; + BOOTP with LUKS)
+ *   ESP ROOTP   partitions to use ("" ESP on BIOS; + BOOTP with LUKS,
+ *   SWAPP       + SWAPP when a swap partition exists)
  *
  * The disk picked in the TUI is baked in below (still confirmed with YES).
  * DISK=/dev/sdX in the environment overrides everything and behaves like
  * the classic whole-disk wipe (automation path). */
 
+static int has_swap(void) { return g_syscfg.swap_gib > 0; }
+
+/* partition variables for the auto (wipe / DISK= env) layout, in disk order:
+ * [bios-boot|ESP] [boot(luks)] [swap] root */
+static void emit_layout_vars(FILE *fp, const int s[CAT_COUNT], const char *ind)
+{
+    int idx = 1;
+    if (s[CAT_FIRMWARE] == FW_BIOS) { fprintf(fp, "%sESP=\"\"\n", ind); idx++; }
+    else fprintf(fp, "%sESP=\"${P}%d\"\n", ind, idx++);
+    if (s[CAT_CRYPT] == E_LUKS) fprintf(fp, "%sBOOTP=\"${P}%d\"\n", ind, idx++);
+    if (has_swap()) fprintf(fp, "%sSWAPP=\"${P}%d\"\n", ind, idx++);
+    fprintf(fp, "%sROOTP=\"${P}%d\"\n", ind, idx);
+}
+
 static void emit_env_path(FILE *fp, const int s[CAT_COUNT])
 {
     fputs("  if [ -n \"${DISK:-}\" ]; then\n"
           "    # non-interactive: DISK given in the environment — whole disk, no questions\n"
-          "    case \"$DISK\" in *[0-9]) P=\"${DISK}p\";; *) P=\"$DISK\";; esac\n", fp);
-    if (s[CAT_FIRMWARE] == FW_BIOS) {
-        if (s[CAT_CRYPT] == E_LUKS)
-            fputs("    ESP=\"\"; BOOTP=\"${P}2\"; ROOTP=\"${P}3\"\n", fp);
-        else
-            fputs("    ESP=\"\"; ROOTP=\"${P}2\"\n", fp);
-    } else if (s[CAT_CRYPT] == E_LUKS)
-        fputs("    ESP=\"${P}1\"; BOOTP=\"${P}2\"; ROOTP=\"${P}3\"\n", fp);
-    else
-        fputs("    ESP=\"${P}1\"; ROOTP=\"${P}2\"\n", fp);
+          "    case \"$DISK\" in *[0-9]) P=\"${DISK}p\";; *) P=\"$DISK\";; esac\n"
+          "    WIPE=1\n", fp);
+    emit_layout_vars(fp, s, "    ");
     fputs("    confirm_target; return\n"
           "  fi\n", fp);
 }
@@ -45,15 +53,14 @@ static void emit_preset(FILE *fp, const int s[CAT_COUNT])
             c->disk);
     switch (c->disk_mode) {
     case DM_WHOLE:
-        if (bios)
-            fputs(luks ? "  WIPE=1; ESP=\"\"; BOOTP=\"${P}2\"; ROOTP=\"${P}3\"\n"
-                       : "  WIPE=1; ESP=\"\"; ROOTP=\"${P}2\"\n", fp);
-        else
-            fputs(luks ? "  WIPE=1; ESP=\"${P}1\"; BOOTP=\"${P}2\"; ROOTP=\"${P}3\"\n"
-                       : "  WIPE=1; ESP=\"${P}1\"; ROOTP=\"${P}2\"\n", fp);
+        fputs("  WIPE=1\n", fp);
+        emit_layout_vars(fp, s, "  ");
         break;
     case DM_FREE:
         fputs("  free_space\n", fp);
+        break;
+    case DM_ONEPART:
+        fprintf(fp, "  onepart %s\n", c->onepart);
         break;
     case DM_PARTS:
         fputs("  WIPE=0; FORMAT_ESP=0\n", fp);
@@ -64,6 +71,10 @@ static void emit_preset(FILE *fp, const int s[CAT_COUNT])
         fprintf(fp, "  ROOTP=%s\n"
                     "  [ -b \"$ROOTP\" ] || { echo \"not a partition: $ROOTP\" >&2; exit 1; }\n",
                 c->rootp);
+        if (c->swapp[0])
+            fprintf(fp, "  SWAPP=%s\n"
+                        "  [ -b \"$SWAPP\" ] || { echo \"not a partition: $SWAPP\" >&2; exit 1; }\n",
+                    c->swapp);
         if (c->bootp[0])
             fprintf(fp, "  BOOTP=%s\n"
                         "  [ -b \"$BOOTP\" ] || { echo \"not a partition: $BOOTP\" >&2; exit 1; }\n",
@@ -78,9 +89,6 @@ static void emit_preset(FILE *fp, const int s[CAT_COUNT])
 
 static void emit_interactive(FILE *fp, const int s[CAT_COUNT])
 {
-    int luks = s[CAT_CRYPT] == E_LUKS;
-    int bios = s[CAT_FIRMWARE] == FW_BIOS;
-
     fputs("  msg 'Install target'\n"
           "  lsblk -d -e7 -o NAME,SIZE,MODEL,TRAN\n"
           "  printf 'Disk (e.g. sda, nvme0n1): '; read -r a; DISK=$(devpath \"$a\")\n"
@@ -88,24 +96,25 @@ static void emit_interactive(FILE *fp, const int s[CAT_COUNT])
           "  case \"$DISK\" in *[0-9]) P=\"${DISK}p\";; *) P=\"$DISK\";; esac\n"
           "  cat <<'MENU'\n"
           "How should this disk be used?\n"
-          "  1) Whole disk      WIPE EVERYTHING and auto-partition (simplest)\n"
+          "  1) Whole disk      WIPE EVERYTHING and auto-partition (boot/swap/root made for you)\n"
           "  2) Free space      keep existing OSes, install into unallocated space (dual-boot)\n"
           "  3) Existing parts  you already made partitions; pick them\n"
-          "  4) Shrink first    shrink an ext4/NTFS partition to make room (dual-boot)\n"
-          "  5) cfdisk          edit the partition table yourself, then pick partitions\n"
+          "  4) One partition   DELETE one partition, auto-create the layout in its place\n"
+          "  5) Shrink first    shrink an ext4/NTFS partition to make room (dual-boot)\n"
+          "  6) cfdisk          edit the partition table yourself, then pick partitions\n"
           "MENU\n"
-          "  printf 'Choice [1-5]: '; read -r m\n"
-          "  case \"$m\" in\n", fp);
-    if (bios)
-        fputs(luks ? "  1) WIPE=1; ESP=\"\"; BOOTP=\"${P}2\"; ROOTP=\"${P}3\" ;;\n"
-                   : "  1) WIPE=1; ESP=\"\"; ROOTP=\"${P}2\" ;;\n", fp);
-    else
-        fputs(luks ? "  1) WIPE=1; ESP=\"${P}1\"; BOOTP=\"${P}2\"; ROOTP=\"${P}3\" ;;\n"
-                   : "  1) WIPE=1; ESP=\"${P}1\"; ROOTP=\"${P}2\" ;;\n", fp);
-    fputs("  2) free_space ;;\n"
+          "  printf 'Choice [1-6]: '; read -r m\n"
+          "  case \"$m\" in\n"
+          "  1) WIPE=1\n", fp);
+    emit_layout_vars(fp, s, "     ");
+    fputs("  ;;\n"
+          "  2) free_space ;;\n"
           "  3) pick_parts ;;\n"
-          "  4) shrink; free_space ;;\n"
-          "  5) cfdisk \"$DISK\"; partprobe \"$DISK\"; sleep 1; pick_parts ;;\n"
+          "  4) lsblk -o NAME,SIZE,FSTYPE,PARTLABEL \"$DISK\"\n"
+          "     printf 'Partition to REPLACE with the auto layout: '; read -r a\n"
+          "     onepart \"$(devpath \"$a\")\" ;;\n"
+          "  5) shrink; free_space ;;\n"
+          "  6) cfdisk \"$DISK\"; partprobe \"$DISK\"; sleep 1; pick_parts ;;\n"
           "  *) echo 'no such option' >&2; exit 1 ;;\n"
           "  esac\n"
           "  confirm_target\n", fp);
@@ -128,7 +137,8 @@ void emit_choose_target(FILE *fp, const int s[CAT_COUNT])
           "    [ -z \"${ESP:-}\" ] || echo \"  ESP:  $ESP ($([ \"$FORMAT_ESP\" = 1 ] && echo formatted || echo 'kept as-is'))\"\n", fp);
     if (luks)
         fputs("    echo \"  boot: $BOOTP (formatted)\"\n", fp);
-    fputs("    echo \"  root: $ROOTP (FORMATTED — everything on it is lost)\"\n"
+    fputs("    [ -z \"${SWAPP:-}\" ] || echo \"  swap: $SWAPP (formatted as swap)\"\n"
+          "    echo \"  root: $ROOTP (FORMATTED — everything on it is lost)\"\n"
           "  fi\n"
           "  printf 'Proceed? Type YES: '; read -r ok\n"
           "  [ \"$ok\" = YES ] || exit 1\n"
@@ -146,7 +156,11 @@ void emit_choose_target(FILE *fp, const int s[CAT_COUNT])
     if (luks)
         fputs("  printf '/boot partition (WILL be formatted ext4): '; read -r a\n"
               "  BOOTP=$(devpath \"$a\"); [ -b \"$BOOTP\" ] || { echo \"not a partition: $BOOTP\" >&2; exit 1; }\n", fp);
-    fputs("  printf 'Root partition (WILL be formatted): '; read -r a\n"
+    fputs("  printf 'Swap partition (Enter = none): '; read -r a\n"
+          "  if [ -n \"$a\" ]; then\n"
+          "    SWAPP=$(devpath \"$a\"); [ -b \"$SWAPP\" ] || { echo \"not a partition: $SWAPP\" >&2; exit 1; }\n"
+          "  fi\n"
+          "  printf 'Root partition (WILL be formatted): '; read -r a\n"
           "  ROOTP=$(devpath \"$a\"); [ -b \"$ROOTP\" ] || { echo \"not a partition: $ROOTP\" >&2; exit 1; }\n"
           "}\n\n", fp);
 
@@ -154,7 +168,7 @@ void emit_choose_target(FILE *fp, const int s[CAT_COUNT])
     fputs("free_space() {\n"
           "  WIPE=0\n"
           "  [ \"$(blkid -s PTTYPE -o value \"$DISK\")\" = gpt ] || {\n"
-          "    echo 'Free-space install needs a GPT disk. Use existing parts or whole-disk.' >&2; exit 1; }\n", fp);
+          "    echo 'This mode needs a GPT disk. Use existing parts or whole-disk.' >&2; exit 1; }\n", fp);
     if (bios)
         fputs("  ESP=\"\"; FORMAT_ESP=0\n"
               "  # GRUB on GPT+BIOS needs a bios-boot (ef02) partition somewhere on the disk\n"
@@ -177,10 +191,29 @@ void emit_choose_target(FILE *fp, const int s[CAT_COUNT])
         fputs("  sgdisk -n0:0:+1G -t0:8300 -c0:lyw-boot \"$DISK\"\n"
               "  partprobe \"$DISK\"; sleep 1\n"
               "  BOOTP=$(by_partlabel lyw-boot)\n", fp);
+    if (has_swap())
+        fprintf(fp,
+              "  sgdisk -n0:0:+%dG -t0:8200 -c0:lyw-swap \"$DISK\"\n"
+              "  partprobe \"$DISK\"; sleep 1\n"
+              "  SWAPP=$(by_partlabel lyw-swap)\n", g_syscfg.swap_gib);
     fputs("  sgdisk -n0:0:0 -t0:8300 -c0:lyw-root \"$DISK\"   # takes the largest free block\n"
           "  partprobe \"$DISK\"; sleep 1\n"
           "  ROOTP=$(by_partlabel lyw-root)\n"
           "  [ -n \"$ROOTP\" ] || { echo 'could not create a root partition — no free space?' >&2; exit 1; }\n"
+          "}\n\n", fp);
+
+    /* delete one partition, then build the auto layout in the freed space */
+    fputs("onepart() {\n"
+          "  TP=$1\n"
+          "  [ -b \"$TP\" ] || { echo \"not a partition: $TP\" >&2; exit 1; }\n"
+          "  lsblk -o NAME,SIZE,FSTYPE,PARTLABEL \"$TP\"\n"
+          "  echo \"$TP will be DELETED and replaced by an automatic boot/swap/root layout.\"\n"
+          "  printf 'Type YES to delete it: '; read -r ok\n"
+          "  [ \"$ok\" = YES ] || exit 1\n"
+          "  PN=$(cat \"/sys/class/block/$(basename \"$TP\")/partition\")\n"
+          "  sgdisk -d \"$PN\" \"$DISK\"\n"
+          "  partprobe \"$DISK\"; sleep 1\n"
+          "  free_space\n"
           "}\n\n", fp);
 
     /* shrink an ext4/NTFS partition, then reuse the freed space */
@@ -224,40 +257,31 @@ void emit_partition(FILE *fp, const int s[CAT_COUNT])
 {
     int luks = s[CAT_CRYPT] == E_LUKS;
     int bios = s[CAT_FIRMWARE] == FW_BIOS;
+    int idx = 1;
 
     fputs("partition() {\n"
-          "  if [ \"$WIPE\" = 1 ]; then\n", fp);
-    if (bios) {
-        /* 1M bios-boot keeps GRUB's core.img on GPT disks */
-        if (luks)
-            fputs("    msg \"Partitioning $DISK (GPT: 1M bios-boot + 1G /boot + LUKS2 root)\"\n"
-                  "    sgdisk --zap-all \"$DISK\"\n"
-                  "    sgdisk -n1:0:+1M -t1:ef02 -c1:lyw-biosboot \\\n"
-                  "           -n2:0:+1G  -t2:8300 -c2:lyw-boot \\\n"
-                  "           -n3:0:0    -t3:8309 -c3:lyw-luks \"$DISK\"\n"
-                  "    partprobe \"$DISK\"; sleep 1\n", fp);
-        else
-            fputs("    msg \"Partitioning $DISK (GPT: 1M bios-boot + root)\"\n"
-                  "    sgdisk --zap-all \"$DISK\"\n"
-                  "    sgdisk -n1:0:+1M -t1:ef02 -c1:lyw-biosboot -n2:0:0 -t2:8300 -c2:lyw-root \"$DISK\"\n"
-                  "    partprobe \"$DISK\"; sleep 1\n", fp);
-    } else if (luks)
-        fputs("    msg \"Partitioning $DISK (GPT: 512M EFI + 1G /boot + LUKS2 root)\"\n"
-              "    sgdisk --zap-all \"$DISK\"\n"
-              "    sgdisk -n1:0:+512M -t1:ef00 -c1:EFI \\\n"
-              "           -n2:0:+1G  -t2:8300 -c2:lyw-boot \\\n"
-              "           -n3:0:0    -t3:8309 -c3:lyw-luks \"$DISK\"\n"
-              "    partprobe \"$DISK\"; sleep 1\n", fp);
+          "  if [ \"$WIPE\" = 1 ]; then\n"
+          "    msg \"Partitioning $DISK (GPT auto layout)\"\n"
+          "    sgdisk --zap-all \"$DISK\"\n"
+          "    sgdisk \\\n", fp);
+    if (bios)
+        fprintf(fp, "      -n%d:0:+1M -t%d:ef02 -c%d:lyw-biosboot \\\n", idx, idx, idx), idx++;
     else
-        fputs("    msg \"Partitioning $DISK (GPT: 512M EFI + root)\"\n"
-              "    sgdisk --zap-all \"$DISK\"\n"
-              "    sgdisk -n1:0:+512M -t1:ef00 -c1:EFI -n2:0:0 -t2:8300 -c2:lyw-root \"$DISK\"\n"
-              "    partprobe \"$DISK\"; sleep 1\n", fp);
-    fputs("  fi\n", fp);
+        fprintf(fp, "      -n%d:0:+512M -t%d:ef00 -c%d:EFI \\\n", idx, idx, idx), idx++;
+    if (luks)
+        fprintf(fp, "      -n%d:0:+1G -t%d:8300 -c%d:lyw-boot \\\n", idx, idx, idx), idx++;
+    if (has_swap())
+        fprintf(fp, "      -n%d:0:+%dG -t%d:8200 -c%d:lyw-swap \\\n",
+                idx, g_syscfg.swap_gib, idx, idx), idx++;
+    fprintf(fp, "      -n%d:0:0 -t%d:%s -c%d:lyw-root \"$DISK\"\n",
+            idx, idx, luks ? "8309" : "8300", idx);
+    fputs("    partprobe \"$DISK\"; sleep 1\n"
+          "  fi\n", fp);
     if (!luks)
         fputs("  ROOTDEV=\"$ROOTP\"\n", fp);
     if (!bios)
         fputs("  if [ \"$FORMAT_ESP\" = 1 ]; then mkfs.fat -F32 \"$ESP\"; fi\n", fp);
+    fputs("  if [ -n \"${SWAPP:-}\" ]; then mkswap -f \"$SWAPP\"; swapon \"$SWAPP\" 2>/dev/null || true; fi\n", fp);
     if (luks)
         fputs("  mkfs.ext4 -F -L lyw-boot \"$BOOTP\"\n"
               "  msg 'Choose your LUKS passphrase'\n"

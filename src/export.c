@@ -34,10 +34,11 @@ int pw_hash(const char *pw, char *out, int outsz)
 static const char *dm_word(int m)
 {
     switch (m) {
-    case DM_WHOLE: return "whole-disk";
-    case DM_FREE:  return "free-space";
-    case DM_PARTS: return "existing-partitions";
-    default:       return "ask-at-install";
+    case DM_WHOLE:   return "whole-disk";
+    case DM_FREE:    return "free-space";
+    case DM_PARTS:   return "existing-partitions";
+    case DM_ONEPART: return "one-partition-auto";
+    default:         return "ask-at-install";
     }
 }
 
@@ -61,9 +62,12 @@ int export_yaml(const int sel[CAT_COUNT], const char *dir)
     fprintf(fp, "  target:\n");
     fprintf(fp, "    mode: %s\n", dm_word(c->disk_mode));
     if (c->disk[0])  fprintf(fp, "    disk: %s\n", c->disk);
-    if (c->esp[0])   fprintf(fp, "    esp: %s\n", c->esp);
-    if (c->bootp[0]) fprintf(fp, "    boot: %s\n", c->bootp);
-    if (c->rootp[0]) fprintf(fp, "    root: %s\n", c->rootp);
+    if (c->esp[0])     fprintf(fp, "    esp: %s\n", c->esp);
+    if (c->bootp[0])   fprintf(fp, "    boot: %s\n", c->bootp);
+    if (c->swapp[0])   fprintf(fp, "    swap: %s\n", c->swapp);
+    if (c->rootp[0])   fprintf(fp, "    root: %s\n", c->rootp);
+    if (c->onepart[0]) fprintf(fp, "    replace_partition: %s\n", c->onepart);
+    fprintf(fp, "    swap_gib: %d\n", c->swap_gib);
 
     fprintf(fp, "  system:\n");
     fprintf(fp, "    hostname: \"%s\"\n", c->hostname);

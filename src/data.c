@@ -237,4 +237,5 @@ void syscfg_defaults(syscfg_t *c)
     strcpy(c->locale,   "en_US.UTF-8");
     strcpy(c->keymap,   "us");
     c->boot_timeout = 3;
+    c->swap_gib = 4;
 }

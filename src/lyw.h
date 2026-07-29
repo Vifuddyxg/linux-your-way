@@ -36,7 +36,7 @@ enum { SEC_NONE, SEC_FIREWALL, SEC_HARDEN, SEC_APPARMOR, SEC_SELINUX };
 enum { IN_BINARY, IN_SOURCE, IN_HYBRID };
 
 /* install-target mode chosen in the TUI (before anything else) */
-enum { DM_ASK, DM_WHOLE, DM_FREE, DM_PARTS };
+enum { DM_ASK, DM_WHOLE, DM_FREE, DM_PARTS, DM_ONEPART };
 
 /* compatibility status, ordered from best to worst */
 enum { ST_OK, ST_EXPERIMENTAL, ST_MANUAL, ST_INCOMPATIBLE };
@@ -50,6 +50,9 @@ typedef struct {
     int  disk_mode;                     /* DM_* */
     char disk[64];                      /* /dev/... ("" with DM_ASK) */
     char esp[64], bootp[64], rootp[64]; /* DM_PARTS picks ("" = n/a) */
+    char swapp[64];                     /* DM_PARTS: existing swap partition */
+    char onepart[64];                   /* DM_ONEPART: partition to replace */
+    int  swap_gib;                      /* swap size for auto layouts, 0 = none */
     char hostname[64];
     char timezone[64];
     char locale[40];
@@ -75,6 +78,9 @@ int compat_overall(const int sel[CAT_COUNT]);
 int compat_option_status(const int sel[CAT_COUNT], int cat, int opt);
 const char *status_glyph(int st);
 const char *status_word(int st);
+
+/* target.c: firmware + disk + partition stage (first wizard screen) */
+int target_stage(int sel[CAT_COUNT], syscfg_t *c);
 
 int export_yaml(const int sel[CAT_COUNT], const char *dir);
 int genbuild_sh(const int sel[CAT_COUNT], const char *dir);

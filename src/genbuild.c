@@ -162,6 +162,8 @@ static void emit_sysconfig(FILE *fp, const int s[CAT_COUNT])
     if (!bios)
         fputs("    printf 'UUID=%s /boot/efi vfat defaults 0 2\\n' "
               "\"$(blkid -s UUID -o value \"$ESP\")\"\n", fp);
+    fputs("    [ -z \"${SWAPP:-}\" ] || printf 'UUID=%s none swap defaults 0 0\\n' "
+          "\"$(blkid -s UUID -o value \"$SWAPP\")\"\n", fp);
     fputs("  } >> \"$ROOT/etc/fstab\"\n", fp);
 
     if (s[CAT_CRYPT] == E_LUKS) {

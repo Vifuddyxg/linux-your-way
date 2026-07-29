@@ -7,152 +7,6 @@
 
 static const char *g_outdir = "lyw-out";
 
-/* ---------- disk & partition picking (runs on this machine) ---------- */
-
-#define MAXPICK 14
-
-/* run cmd, one item per output line; returns count */
-static int lines_to_items(const char *cmd, char store[][96], item_t *items, int max)
-{
-    FILE *p = popen(cmd, "r");
-    if (!p) return 0;
-    int n = 0;
-    char line[96];
-    while (n < max && fgets(line, sizeof line, p)) {
-        line[strcspn(line, "\n")] = '\0';
-        if (!line[0]) continue;
-        snprintf(store[n], 96, "%s", line);
-        items[n].label = store[n];
-        items[n].desc = NULL;
-        items[n].status = -1;
-        n++;
-    }
-    pclose(p);
-    return n;
-}
-
-static void first_word(const char *line, char *out, int outsz)
-{
-    int i = 0;
-    while (line[i] && line[i] != ' ' && i < outsz - 1) { out[i] = line[i]; i++; }
-    out[i] = '\0';
-}
-
-static int pick_partition(const char *disk, const char *what, int optional,
-                          char *out, int outsz)
-{
-    char cmd[256], store[MAXPICK][96], name[40];
-    item_t items[MAXPICK + 1];
-    snprintf(cmd, sizeof cmd,
-             "lsblk -ln -o NAME,SIZE,FSTYPE,PARTLABEL %s 2>/dev/null | tail -n +2", disk);
-    int n = lines_to_items(cmd, store, items, MAXPICK);
-    if (optional) {
-        items[n].label = "(skip)";
-        items[n].desc = "Leave unset.";
-        items[n].status = -1;
-        n++;
-    }
-    if (n == 0) return UI_BACK;
-    char title[96];
-    snprintf(title, sizeof title, "Install target — %s", what);
-    int r = ui_menu(title, "Partitions on the chosen disk.", items, n, 0);
-    if (r < 0) return r;
-    if (optional && r == n - 1) { out[0] = '\0'; return 0; }
-    first_word(store[r], name, sizeof name);
-    snprintf(out, outsz, "/dev/%s", name);
-    return 0;
-}
-
-/* firmware + disk + mode + (partitions). 0 ok, UI_BACK, UI_QUIT */
-static int target_stage(int sel[CAT_COUNT], syscfg_t *c)
-{
-    /* firmware first: it decides which loaders/partitions make sense */
-    struct stat st;
-    int fwdef = stat("/sys/firmware/efi", &st) == 0 ? FW_UEFI : FW_BIOS;
-    item_t fw[2];
-    for (int o = 0; o < 2; o++) {
-        fw[o].label = categories[CAT_FIRMWARE].opts[o].name;
-        fw[o].desc  = categories[CAT_FIRMWARE].opts[o].desc;
-        fw[o].status = -1;
-    }
-    fw[fwdef].desc = fwdef == FW_UEFI
-        ? "Auto-detected: this machine booted with UEFI."
-        : "Auto-detected: this machine booted in BIOS/legacy mode.";
-
-step_fw:;
-    int r = ui_menu("Install target — firmware", "How does this machine boot?",
-                    fw, 2, sel[CAT_FIRMWARE] >= 0 ? sel[CAT_FIRMWARE] : fwdef);
-    if (r < 0) return r;
-    sel[CAT_FIRMWARE] = r;
-
-step_disk:;
-    char store[MAXPICK][96];
-    item_t items[MAXPICK + 1];
-    int nd = lines_to_items("lsblk -dn -e7 -o NAME,SIZE,MODEL,TRAN 2>/dev/null",
-                            store, items, MAXPICK);
-    items[nd].label = "Decide at install time";
-    items[nd].desc = "Export a portable config; build.sh asks for the disk when it runs.";
-    items[nd].status = -1;
-    r = ui_menu("Install target — disk",
-                "WHERE will this system be installed? Nothing is written before build.sh runs.",
-                items, nd + 1, 0);
-    if (r == UI_QUIT) return r;
-    if (r == UI_BACK) goto step_fw;
-    if (r == nd) {
-        c->disk_mode = DM_ASK;
-        c->disk[0] = c->esp[0] = c->bootp[0] = c->rootp[0] = '\0';
-        return 0;
-    }
-    char name[40];
-    first_word(store[r], name, sizeof name);
-    snprintf(c->disk, sizeof c->disk, "/dev/%s", name);
-
-step_mode:;
-    char sub[128];
-    snprintf(sub, sizeof sub, "How should %s be used?", c->disk);
-    static const item_t modes[] = {
-        { "Whole disk",             "WIPE EVERYTHING on this disk and auto-partition it. Simplest.", -1 },
-        { "Free space",             "Keep existing OSes; install into unallocated space (dual-boot).", -1 },
-        { "Existing partitions",    "You already made partitions; pick them explicitly (only those are touched).", -1 },
-        { "Edit partitions (cfdisk)","Open cfdisk on this disk NOW to create/resize/delete partitions, then pick them.", -1 },
-        { "Decide at install",      "Keep the disk pick, answer the layout questions when build.sh runs.", -1 },
-    };
-    r = ui_menu("Install target — mode", sub, modes, 5, 0);
-    if (r == UI_QUIT) return r;
-    if (r == UI_BACK) goto step_disk;
-    if (r == 4) { c->disk_mode = DM_ASK; return 0; }
-    if (r == 3) {
-        /* partition editor, then pick the partitions just made */
-        ui_end();
-        char cmd[96];
-        snprintf(cmd, sizeof cmd, "cfdisk %s", c->disk);
-        if (system(cmd) == -1) { /* cfdisk missing: picker below still works */ }
-        ui_init();
-        c->disk_mode = DM_PARTS;
-    } else {
-        c->disk_mode = r == 0 ? DM_WHOLE : r == 1 ? DM_FREE : DM_PARTS;
-    }
-    c->esp[0] = c->bootp[0] = c->rootp[0] = '\0';
-    if (c->disk_mode != DM_PARTS) return 0;
-
-    if (sel[CAT_FIRMWARE] == FW_UEFI) {
-        r = pick_partition(c->disk, "EFI system partition (kept as-is)", 0,
-                           c->esp, sizeof c->esp);
-        if (r == UI_QUIT) return r;
-        if (r == UI_BACK) goto step_mode;
-    }
-    r = pick_partition(c->disk, "root partition (WILL BE FORMATTED)", 0,
-                       c->rootp, sizeof c->rootp);
-    if (r == UI_QUIT) return r;
-    if (r == UI_BACK) goto step_mode;
-    r = pick_partition(c->disk,
-                       "/boot partition (optional; needed only with LUKS — formatted ext4)", 1,
-                       c->bootp, sizeof c->bootp);
-    if (r == UI_QUIT) return r;
-    if (r == UI_BACK) goto step_mode;
-    return 0;
-}
-
 /* ---------- category wizard (with conditional questions) ---------- */
 
 static int skip_cat(const int sel[CAT_COUNT], int i)
@@ -199,6 +53,20 @@ static int wizard(int sel[CAT_COUNT])
             continue;
         }
         sel[i] = r;
+        /* picking a ✗ option: say immediately WHICH other layer it fights */
+        if (compat_option_status(sel, i, r) == ST_INCOMPATIBLE) {
+            finding_t f[MAX_FINDINGS];
+            int nf = compat_eval(sel, f, MAX_FINDINGS);
+            if (nf > MAX_FINDINGS) nf = MAX_FINDINGS;
+            const char *why = "";
+            for (int k = 0; k < nf; k++)
+                if (f[k].status == ST_INCOMPATIBLE && (f[k].mask & (1u << i))) {
+                    why = f[k].msg;
+                    break;
+                }
+            ui_message("This combination cannot work", why,
+                       "Keep it and change the OTHER layer later, or go Back and pick differently.");
+        }
         i++;
     }
     return 0;
@@ -223,8 +91,9 @@ static int f_kcustom(const int sel[CAT_COUNT])
 
 static int settings_stage(const int sel[CAT_COUNT], syscfg_t *c)
 {
-    char timeout[8];
+    char timeout[8], swapg[8];
     snprintf(timeout, sizeof timeout, "%d", c->boot_timeout);
+    snprintf(swapg, sizeof swapg, "%d", c->swap_gib);
     char rootpw2[128], userpw2[128];
     field_t fields[] = {
       { "Settings — hostname", "System hostname:", c->hostname, sizeof c->hostname, 0, NULL },
@@ -241,6 +110,8 @@ static int settings_stage(const int sel[CAT_COUNT], syscfg_t *c)
       { "Settings — user password", "Password for the user:", c->userpw, sizeof c->userpw, 1, f_user_set },
       { "Settings — user password", "Repeat user password:", userpw2, sizeof userpw2, 1, f_user_set },
       { "Settings — boot menu", "Bootloader menu timeout in seconds:", timeout, sizeof timeout, 0, NULL },
+      { "Settings — swap", "Swap size in GiB for automatic layouts (0 = no swap):",
+        swapg, sizeof swapg, 0, NULL },
       { "Settings — kernel version", "Kernel git tag/branch (empty = default branch, e.g. v6.12):",
         c->kver, sizeof c->kver, 0, f_ksource },
       { "Settings — kernel fork", "Git URL of your kernel tree (empty = kernel.org stable):",
@@ -275,6 +146,8 @@ static int settings_stage(const int sel[CAT_COUNT], syscfg_t *c)
     }
     c->boot_timeout = atoi(timeout);
     if (c->boot_timeout < 0 || c->boot_timeout > 60) c->boot_timeout = 3;
+    c->swap_gib = atoi(swapg);
+    if (c->swap_gib < 0 || c->swap_gib > 256) c->swap_gib = 4;
     return 0;
 }
 
@@ -358,7 +231,7 @@ static void tui_run(void)
     ui_init();
     int cur = 0;
     for (;;) {
-        int a = ui_menu("Linux Your Way", "Total control — there is no easy mode.", actions, 3, cur);
+        int a = ui_menu("Linux Your Way", "Pick every layer of your system — the wizard guides you through.", actions, 3, cur);
         if (a == UI_QUIT || a == UI_BACK || a == 2) break;
         cur = a;
         if (a == 1) { network_setup(); continue; }
@@ -375,6 +248,17 @@ static void tui_run(void)
             char l1[256];
             switch (ui_summary(sel)) {
             case 'i':
+                if (compat_overall(sel) == ST_INCOMPATIBLE) {
+                    finding_t f[MAX_FINDINGS];
+                    int nf = compat_eval(sel, f, MAX_FINDINGS);
+                    if (nf > MAX_FINDINGS) nf = MAX_FINDINGS;
+                    const char *why = "";
+                    for (int k = 0; k < nf; k++)
+                        if (f[k].status == ST_INCOMPATIBLE) { why = f[k].msg; break; }
+                    ui_message("Cannot install: incompatible combination", why,
+                               "Press [B] and change one of the two layers marked ✗.");
+                    break;
+                }
                 if (do_export(sel) != 0) {
                     snprintf(l1, sizeof l1, "Could not write to %s/", g_outdir);
                     ui_message("Export failed", l1, NULL);

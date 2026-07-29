@@ -145,9 +145,16 @@ static void summary_target(int y)
         mvprintw(y, 2, "Target: %s — install into free space (existing OSes kept)", c->disk);
         break;
     case DM_PARTS:
-        mvprintw(y, 2, "Target: %s  root=%s (formatted)  ESP=%s%s%s",
+        mvprintw(y, 2, "Target: %s  root=%s (formatted)  ESP=%s%s%s%s%s",
                  c->disk, c->rootp, c->esp[0] ? c->esp : "-",
+                 c->swapp[0] ? "  swap=" : "", c->swapp,
                  c->bootp[0] ? "  boot=" : "", c->bootp);
+        break;
+    case DM_ONEPART:
+        attron(COLOR_PAIR(CP_STATUS(ST_MANUAL)));
+        mvprintw(y, 2, "Target: %s — %s is DELETED, boot/swap/root auto-created in its place",
+                 c->disk, c->onepart);
+        attroff(COLOR_PAIR(CP_STATUS(ST_MANUAL)));
         break;
     default:
         mvprintw(y, 2, "Target: chosen interactively when build.sh runs");
