@@ -370,7 +370,8 @@ int compat_overall(const int s[CAT_COUNT])
     return worst;
 }
 
-int compat_option_status(const int sel[CAT_COUNT], int cat, int opt)
+int compat_option_status(const int sel[CAT_COUNT], int cat, int opt,
+                         unsigned answered)
 {
     int s[CAT_COUNT];
     memcpy(s, sel, sizeof s);
@@ -379,8 +380,11 @@ int compat_option_status(const int sel[CAT_COUNT], int cat, int opt)
     finding_t f[MAX_FINDINGS];
     int n = compat_eval(s, f, MAX_FINDINGS), worst = ST_OK;
     if (n > MAX_FINDINGS) n = MAX_FINDINGS;
-    for (int i = 0; i < n; i++)
-        if ((f[i].mask & M(cat)) && f[i].status > worst) worst = f[i].status;
+    for (int i = 0; i < n; i++) {
+        if (!(f[i].mask & M(cat))) continue;
+        if (f[i].mask & ~M(cat) & ~answered) continue; /* involves an unanswered layer */
+        if (f[i].status > worst) worst = f[i].status;
+    }
     return worst;
 }
 

@@ -27,12 +27,17 @@ static int wizard(int sel[CAT_COUNT])
     int i = 0;
     while (i < CAT_COUNT) {
         if (skip_cat(sel, i)) { i++; continue; }
+        /* judge each option only against layers already answered: firmware
+         * (target stage) plus every non-skipped category before this one */
+        unsigned answered = 1u << CAT_FIRMWARE;
+        for (int k = 0; k < i; k++)
+            if (!skip_cat(sel, k)) answered |= 1u << k;
         const category_t *c = &categories[i];
         item_t items[32];
         for (int o = 0; o < c->nopts && o < 32; o++) {
             items[o].label = c->opts[o].name;
             items[o].desc = c->opts[o].desc;
-            items[o].status = compat_option_status(sel, i, o);
+            items[o].status = compat_option_status(sel, i, o, answered);
         }
         int step = 0, steps = 0;
         for (int k = 0; k < CAT_COUNT; k++) {
@@ -53,19 +58,20 @@ static int wizard(int sel[CAT_COUNT])
             continue;
         }
         sel[i] = r;
-        /* picking a ✗ option: say immediately WHICH other layer it fights */
-        if (compat_option_status(sel, i, r) == ST_INCOMPATIBLE) {
+        /* picking a ✗ option: say immediately WHICH earlier layer it fights */
+        if (compat_option_status(sel, i, r, answered) == ST_INCOMPATIBLE) {
             finding_t f[MAX_FINDINGS];
             int nf = compat_eval(sel, f, MAX_FINDINGS);
             if (nf > MAX_FINDINGS) nf = MAX_FINDINGS;
             const char *why = "";
             for (int k = 0; k < nf; k++)
-                if (f[k].status == ST_INCOMPATIBLE && (f[k].mask & (1u << i))) {
+                if (f[k].status == ST_INCOMPATIBLE && (f[k].mask & (1u << i)) &&
+                    !(f[k].mask & ~(1u << i) & ~answered)) {
                     why = f[k].msg;
                     break;
                 }
-            ui_message("This combination cannot work", why,
-                       "Keep it and change the OTHER layer later, or go Back and pick differently.");
+            ui_message("This conflicts with an earlier choice", why,
+                       "Keep it and change the other layer later, or go Back and pick differently.");
         }
         i++;
     }

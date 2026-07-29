@@ -74,8 +74,12 @@ void syscfg_defaults(syscfg_t *c);
 #define MAX_FINDINGS 48
 int compat_eval(const int sel[CAT_COUNT], finding_t *out, int max);
 int compat_overall(const int sel[CAT_COUNT]);
-/* worst status among findings that involve `cat` if option `opt` were chosen */
-int compat_option_status(const int sel[CAT_COUNT], int cat, int opt);
+/* Worst status among findings that involve `cat` if option `opt` were chosen.
+ * Only findings whose OTHER categories are all in `answered` (bitmask of
+ * 1u<<cat) count — a choice is never judged against defaults the user has
+ * not confirmed yet. Pass ~0u to judge against everything. */
+int compat_option_status(const int sel[CAT_COUNT], int cat, int opt,
+                         unsigned answered);
 const char *status_glyph(int st);
 const char *status_word(int st);
 
